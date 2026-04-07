@@ -1,0 +1,22 @@
+BEGIN TRY
+
+BEGIN TRAN;
+
+-- AlterTable
+ALTER TABLE [dbo].[Contact] ADD [optIn] BIT NOT NULL CONSTRAINT [Contact_optIn_df] DEFAULT 1;
+
+-- AlterTable
+ALTER TABLE [dbo].[Message] ADD [retryCount] INT NOT NULL CONSTRAINT [Message_retryCount_df] DEFAULT 0;
+
+COMMIT TRAN;
+
+END TRY
+BEGIN CATCH
+
+IF @@TRANCOUNT > 0
+BEGIN
+    ROLLBACK TRAN;
+END;
+THROW
+
+END CATCH

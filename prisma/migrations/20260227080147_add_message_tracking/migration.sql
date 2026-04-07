@@ -1,0 +1,22 @@
+BEGIN TRY
+
+BEGIN TRAN;
+
+-- AlterTable
+ALTER TABLE [dbo].[Message] ADD [body] NVARCHAR(1000),
+[direction] NVARCHAR(1000) NOT NULL CONSTRAINT [Message_direction_df] DEFAULT 'OUTBOUND',
+[errorReason] NVARCHAR(1000),
+[whatsappMsgId] NVARCHAR(1000);
+
+COMMIT TRAN;
+
+END TRY
+BEGIN CATCH
+
+IF @@TRANCOUNT > 0
+BEGIN
+    ROLLBACK TRAN;
+END;
+THROW
+
+END CATCH
