@@ -19,12 +19,10 @@
 
 import { Queue } from "bullmq";
 
-// Upstash Redis ke liye optimized connection
 const connection = {
   url: process.env.REDIS_URL!,
-  // Upstash ke saath ye zaroori hai - persistent connection nahi rakhta
   enableOfflineQueue: false,
-  maxRetriesPerRequest: 3,
+  maxRetriesPerRequest: null,  // ✅ BullMQ ke liye null hona chahiye
 };
 
 export const whatsappQueue = new Queue("whatsapp-messages", {
@@ -32,31 +30,19 @@ export const whatsappQueue = new Queue("whatsapp-messages", {
   defaultJobOptions: {
     attempts: 3,
     backoff: { type: "exponential", delay: 5000 },
-
-    // ✅ Upstash commands bachane ke liye:
-    // removeOnComplete: true ke bajaye count limit rakho
-    // Warna BullMQ har complete pe ZREM + LREM dono chalata hai
-    removeOnComplete: { count: 50 },   // sirf last 50 completed jobs rakho
-    removeOnFail: { count: 100 },      // last 100 failed jobs rakho
-
-    // ❌ delay mat rakho jab zaroorat na ho — unnecessary ZADD commands badhte hain
+    removeOnComplete: { count: 50 },
+    removeOnFail: { count: 100 },
   },
 });
 
-// ---------------------------------------------------------
-// Bulk enqueue — 500 contacts ke liye ek loop se add karo
-// Ek ek addJob() ke bajaye addBulk() use karo = 1 pipeline = ~10x kam commands
-// ---------------------------------------------------------
 export async function enqueueBulkMessages(messageIds: number[]) {
   const jobs = messageIds.map((messageId) => ({
-    name: "send-whatsapp",
+    name: "send-message",  // ✅ worker.ts se match karo
     data: { messageId },
     opts: {
-      // jobId deduplicate karta hai — same message dobara queue mein nahi jayega
-      jobId: `msg-${messageId}`,
+      jobId: `msg-${messageId}`,  // ✅ duplicate prevent
     },
   }));
 
-  // addBulk = single Redis pipeline = bahut kam commands
   await whatsappQueue.addBulk(jobs);
 }

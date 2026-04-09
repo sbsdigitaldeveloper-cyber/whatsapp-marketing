@@ -1,23 +1,7 @@
-// app/api/whatsapp/templates/send/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { whatsappQueue } from "@/lib/queue";
-import jwt from "jsonwebtoken";
+import { enqueueBulkMessages } from "@/lib/queue";  // ✅ bulk use karo
 import { getUserId } from "@/lib/auth";
-
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
-
-// function getUserId(req: NextRequest): number | null {
-//   const auth = req.headers.get("authorization");
-//   if (!auth) return null;
-//   try {
-//     const token = auth.replace("Bearer ", "");
-//     const decoded = jwt.verify(token, JWT_SECRET) as { userId: number };
-//     return decoded.userId;
-//   } catch {
-//     return null;
-//   }
-// }
 
 export async function POST(req: NextRequest) {
   const userId = await getUserId(req);
@@ -38,7 +22,7 @@ export async function POST(req: NextRequest) {
     if (!contactIds || contactIds.length === 0)
       return NextResponse.json({ error: "No contacts selected" }, { status: 400 });
 
-    // Auto-create a campaign for this template send
+    // Campaign banao
     const campaign = await prisma.campaign.create({
       data: {
         userId,
@@ -47,11 +31,12 @@ export async function POST(req: NextRequest) {
         messageType: "TEMPLATE",
         templateName,
         templateLanguage,
-        templateParams: JSON.stringify(templateParams), // 👈 stringify for SQL Server
+        templateParams: JSON.stringify(templateParams),
         status: "QUEUED",
       },
     });
 
+    // Valid opted-in contacts lo
     const contacts = await prisma.contact.findMany({
       where: {
         userId,
@@ -61,31 +46,42 @@ export async function POST(req: NextRequest) {
     });
 
     if (contacts.length === 0) {
-      // Clean up campaign if no valid contacts
       await prisma.campaign.delete({ where: { id: campaign.id } });
-      return NextResponse.json({ error: "No valid opted-in contacts" }, { status: 400 });
+      return NextResponse.json(
+        { error: "No valid opted-in contacts" },
+        { status: 400 }
+      );
     }
 
-    // Queue a job per contact
-    await Promise.all(
-      contacts.map(async (contact) => {
-        const msg = await prisma.message.create({
+    // ✅ Saare messages ek saath banao — bulk insert
+    const messages = await prisma.$transaction(
+      contacts.map((contact) =>
+        prisma.message.create({
           data: {
             campaignId: campaign.id,
             contactId: contact.id,
-            status: "DRAFT",
+            status: "PENDING",  // ✅ DRAFT nahi — PENDING
           },
-        });
-
-        return whatsappQueue.add("send-message", { messageId: msg.id });
-      })
+        })
+      )
     );
+
+    // ✅ Bulk queue mein daalo — kam Redis commands
+    const messageIds = messages.map((m) => m.id);
+    await enqueueBulkMessages(messageIds);
+
+    // ✅ Campaign status update
+    await prisma.campaign.update({
+      where: { id: campaign.id },
+      data: { status: "SENDING" },
+    });
 
     return NextResponse.json({
       success: true,
       campaignId: campaign.id,
       queued: contacts.length,
     });
+
   } catch (error: any) {
     console.error("Template send error:", error);
     return NextResponse.json(

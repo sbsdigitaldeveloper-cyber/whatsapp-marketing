@@ -580,5 +580,13 @@ worker.on("error", (err) => {
   console.error("Worker error:", err.message);
 });
 
+
+worker.on("drained", async () => {
+  console.log("✅ Queue empty — worker band ho raha hai");
+  await worker.close();
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
 console.log("🚀 Worker running — concurrency:10, rate:20/s, stalledInterval:5min");
 
