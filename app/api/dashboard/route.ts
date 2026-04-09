@@ -21,6 +21,9 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    // =========================
+    // ✅ GET ALL MESSAGES
+    // =========================
     const contacts = await getMessages(Number(userId));
     const allMessages = contacts.flatMap((c) => c.messages);
 
@@ -37,8 +40,9 @@ export async function GET(req: NextRequest) {
     const replied = inbound.length;
     const failed = outbound.filter((m) => m.status === "FAILED").length;
 
-    console.log({ sent, delivered, read, replied, failed });
-
+    // =========================
+    // ✅ KPI
+    // =========================
     const kpis = [
       { label: "Templates sent", value: fmtNum(sent) },
       { label: "Delivery rate", value: `${pct(delivered, sent)}%` },
@@ -47,6 +51,9 @@ export async function GET(req: NextRequest) {
       { label: "Failed messages", value: fmtNum(failed) },
     ];
 
+    // =========================
+    // ✅ FUNNEL
+    // =========================
     const funnel = [
       { label: "Sent", count: sent, pct: 100 },
       { label: "Delivered", count: delivered, pct: pct(delivered, sent) },
@@ -55,7 +62,9 @@ export async function GET(req: NextRequest) {
       { label: "Failed", count: failed, pct: pct(failed, sent) },
     ];
 
-    // failures
+    // =========================
+    // ✅ FAILURE REASONS
+    // =========================
     const reasonMap: Record<string, number> = {};
     for (const m of outbound.filter((m) => m.status === "FAILED")) {
       const key = m.errorReason ?? "Unknown";
@@ -68,7 +77,66 @@ export async function GET(req: NextRequest) {
       pct: pct(count, failed || 1),
     }));
 
-    // campaigns
+    // =========================
+    // ✅ OPTIMIZATION (IMPORTANT)
+    // =========================
+    const messageToContact = new Map();
+
+    for (const c of contacts) {
+      for (const m of c.messages) {
+        messageToContact.set(m.id, c);
+      }
+    }
+
+    // =========================
+    // ✅ FAILED MESSAGES LIST
+    // =========================
+    const failedList = outbound
+      .filter((m) => m.status === "FAILED")
+      .map((m) => {
+        const contact = messageToContact.get(m.id);
+
+        return {
+          id: m.id,
+          name: contact?.name || "Unknown",
+          phone: contact?.phone,
+          campaign: m.campaign?.name,
+          template: m.campaign?.templateName,
+          error: m.errorReason || "Unknown",
+          message: m.body,
+          sentAt: m.sentAt,
+        };
+      })
+      .sort(
+        (a, b) =>
+          new Date(b.sentAt || 0).getTime() -
+          new Date(a.sentAt || 0).getTime()
+      );
+
+    // =========================
+    // ✅ UNIQUE FAILED CONTACTS
+    // =========================
+    const contactMap = new Map();
+
+    for (const m of failedList) {
+      if (!m.phone) continue;
+
+      if (!contactMap.has(m.phone)) {
+        contactMap.set(m.phone, {
+          name: m.name,
+          phone: m.phone,
+          failures: 0,
+        });
+      }
+
+      contactMap.get(m.phone).failures++;
+    }
+
+    const failedContacts = Array.from(contactMap.values());
+
+    // =========================
+    // ✅ CAMPAIGNS
+    // =========================
     const campaignMap = new Map();
 
     for (const m of allMessages) {
@@ -108,9 +176,9 @@ export async function GET(req: NextRequest) {
       repliedPct: pct(row.replied, row.sent),
     }));
 
-    console.log("CAMPAIGNS:", campaigns.length);
-
-    // volume chart
+    // =========================
+    // ✅ VOLUME CHART
+    // =========================
     const dayMap = new Map<string, { sent: number; delivered: number }>();
 
     for (const m of outbound) {
@@ -136,7 +204,9 @@ export async function GET(req: NextRequest) {
       delivered: row.delivered,
     }));
 
-    // templates
+    // =========================
+    // ✅ TOP TEMPLATES
+    // =========================
     const tplMap = new Map();
 
     for (const m of allMessages) {
@@ -166,6 +236,9 @@ export async function GET(req: NextRequest) {
       })
     );
 
+    // =========================
+    // ✅ FINAL RESPONSE
+    // =========================
     return NextResponse.json({
       kpis,
       funnel,
@@ -173,6 +246,10 @@ export async function GET(req: NextRequest) {
       campaigns,
       volumeChart,
       topTemplates,
+
+      // 🔥 NEW DATA
+      failedList,
+      failedContacts,
     });
 
   } catch (err) {

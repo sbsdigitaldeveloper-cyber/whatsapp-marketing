@@ -407,7 +407,10 @@
 
 
 import dotenv from "dotenv";
-dotenv.config({ path: ".env.local" });
+// dotenv.config({ path: ".env.local" });
+dotenv.config({ 
+  path: process.env.NODE_ENV === "production" ? ".env" : ".env.local" 
+});
 
 import { Worker, Job } from "bullmq";
 import { prisma } from "./lib/prisma";

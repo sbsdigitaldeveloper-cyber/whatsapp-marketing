@@ -81,14 +81,13 @@ import { TopTemplates } from "@/components/dashboard/TopTemplates";
 import { useDashboardData } from "../hooks/useDashboardData";
 import { DeliveryFunnel } from "@/components/dashboard/Deliveryfunnel";
 import { FailureBreakdown } from "@/components/dashboard/Failurebreakdown";
+import { FailedMessagesList } from "@/components/dashboard/FailedMessagesList";
 
 type DateRange = "today" | "7d" | "30d";
 
 export default function DashboardPage() {
   const [dateRange, setDateRange] = useState<DateRange>("7d");
   const { data, isLoading, error } = useDashboardData(dateRange);
-
-  console.log("DASHBOARD DATA:", data);
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900" style={{ fontFamily: "'DM Sans', sans-serif" }}>
@@ -102,13 +101,11 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Live */}
             <div className="flex items-center gap-2 px-3 py-1.5 bg-green-100 border border-green-300 rounded-lg">
               <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
               <span className="text-xs text-green-600 font-medium">Live</span>
             </div>
 
-            {/* Date range */}
             <div className="flex bg-white border border-gray-300 rounded-lg p-1 gap-1">
               {(["today", "7d", "30d"] as DateRange[]).map((r) => (
                 <button
@@ -134,37 +131,46 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Loading */}
-        {isLoading && (
-          <div className="text-sm text-gray-500 mb-4">Loading dashboard...</div>
-        )}
-
         {/* KPI Cards */}
         <KPICards data={data?.kpis || []} isLoading={isLoading} />
 
         {/* Funnel + Failures */}
         <div className="grid grid-cols-5 gap-4 mt-4">
           <div className="col-span-3">
-            <DeliveryFunnel data={data?.funnel || []} isLoading={isLoading}  />
+            <DeliveryFunnel data={data?.funnel || []} isLoading={isLoading} />
           </div>
           <div className="col-span-2">
-            <FailureBreakdown data={data?.failures || []} isLoading={isLoading}  />
+            <FailureBreakdown data={data?.failures || []} isLoading={isLoading} />
           </div>
         </div>
 
         {/* Campaigns */}
-        <div className="mt-4">
-          <CampaignTable data={data?.campaigns || []} isLoading={isLoading}  />
-        </div>
+        {/* <div className="mt-4">
+          <CampaignTable data={data?.campaigns || []} isLoading={isLoading} />
+        </div> */}
 
         {/* Charts */}
-        <div className="grid grid-cols-5 gap-4 mt-4 mb-8">
+        <div className="grid grid-cols-5 gap-4 mt-4 mb-4">
           <div className="col-span-3">
-            <MessageVolumeChart data={data?.volumeChart || []} isLoading={isLoading}  />
+            <MessageVolumeChart data={data?.volumeChart || []} isLoading={isLoading} />
           </div>
           <div className="col-span-2">
-            <TopTemplates data={data?.topTemplates || []} isLoading={isLoading}  />
+            <TopTemplates data={data?.topTemplates || []} isLoading={isLoading} />
           </div>
+        </div>
+
+        {/* Failed Messages — full width, campaign-grouped */}
+        <div className="mt-4 mb-8">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900">Failed Messages</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Grouped by campaign</p>
+            </div>
+          </div>
+          <FailedMessagesList
+            data={data?.failedList || []}
+            isLoading={isLoading}
+          />
         </div>
 
       </main>
