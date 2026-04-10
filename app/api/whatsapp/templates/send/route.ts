@@ -11,6 +11,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const {
+      campaignName,
       templateName,
       templateLanguage = "en",
       templateParams = [],
@@ -27,7 +28,8 @@ export async function POST(req: NextRequest) {
     const campaign = await prisma.campaign.create({
       data: {
         userId,
-        name: `Template: ${templateName} - ${new Date().toLocaleDateString()}`,
+      
+        name: campaignName || `Template: ${templateName} - ${new Date().toLocaleDateString()}`,
         message: "",
         messageType: "TEMPLATE",
         templateName,
