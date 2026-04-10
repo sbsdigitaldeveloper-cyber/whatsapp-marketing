@@ -19,17 +19,39 @@ export async function POST(req: NextRequest) {
     } = await req.json();
 
     if (!templateName)
-      return NextResponse.json({ error: "templateName required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "templateName required" },
+        { status: 400 }
+      );
 
     if (!contactIds || contactIds.length === 0)
-      return NextResponse.json({ error: "No contacts selected" }, { status: 400 });
+      return NextResponse.json(
+        { error: "No contacts selected" },
+        { status: 400 }
+      );
 
-    // Campaign banao
+    // ✅ Valid opted-in contacts pehle lo
+    const contacts = await prisma.contact.findMany({
+      where: {
+        userId,
+        optIn: true,
+        id: { in: contactIds },
+      },
+      select: { id: true },
+    });
+
+    if (contacts.length === 0)
+      return NextResponse.json(
+        { error: "No valid opted-in contacts" },
+        { status: 400 }
+      );
+
+    // ✅ Campaign banao
     const campaign = await prisma.campaign.create({
       data: {
         userId,
-      
-        name: campaignName || `Template: ${templateName} - ${new Date().toLocaleDateString()}`,
+        name: campaignName ||
+          `Template: ${templateName} - ${new Date().toLocaleDateString()}`,
         message: "",
         messageType: "TEMPLATE",
         templateName,
@@ -39,47 +61,32 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // Valid opted-in contacts lo
-    const contacts = await prisma.contact.findMany({
-      where: {
-        userId,
-        optIn: true,
-        id: { in: contactIds },
-      },
+    // ✅ Bulk insert — 1 query mein saare messages
+    await prisma.message.createMany({
+      data: contacts.map((contact) => ({
+        campaignId: campaign.id,
+        contactId:  contact.id,
+        status:     "PENDING",
+      })),
     });
 
-    if (contacts.length === 0) {
-      await prisma.campaign.delete({ where: { id: campaign.id } });
-      return NextResponse.json(
-        { error: "No valid opted-in contacts" },
-        { status: 400 }
-      );
-    }
+    // ✅ Message IDs lo
+    const messages = await prisma.message.findMany({
+      where:  { campaignId: campaign.id },
+      select: { id: true },
+    });
 
-    // ✅ Saare messages ek saath banao
-    const messages = await prisma.$transaction(
-      contacts.map((contact) =>
-        prisma.message.create({
-          data: {
-            campaignId: campaign.id,
-            contactId: contact.id,
-            status: "PENDING",
-          },
-        })
-      )
-    );
-
-    // ✅ Bulk queue mein daalo
+    // ✅ Bulk queue mein daalo — ek call
     const messageIds = messages.map((m) => m.id);
     await enqueueBulkMessages(messageIds);
 
-    // ✅ Campaign status update
+    // ✅ Campaign SENDING
     await prisma.campaign.update({
       where: { id: campaign.id },
-      data: { status: "SENDING" },
+      data:  { status: "SENDING" },
     });
 
-    // ✅ Worker auto start karo
+    // ✅ Worker auto start
     const workerProcess = spawn(
       "tsx",
       ["worker.ts"],
@@ -91,7 +98,7 @@ export async function POST(req: NextRequest) {
       }
     );
     workerProcess.unref();
-    console.log("🚀 Worker started for campaign");
+    console.log(`🚀 Worker started — ${contacts.length} contacts queued`);
 
     return NextResponse.json({
       success: true,
