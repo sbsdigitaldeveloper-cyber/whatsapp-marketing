@@ -32,49 +32,46 @@
 
 
 
-// lib/auth.ts
+
 // lib/auth.ts
 import { NextRequest } from "next/server";
 import { jwtVerify, SignJWT } from "jose";
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
-const secret     = new TextEncoder().encode(JWT_SECRET);
+const secret = new TextEncoder().encode(JWT_SECRET);
 
-export async function getUserId(req: NextRequest): Promise<number | null> {
-  try {
-    const token = req.cookies.get("token")?.value;
-    if (!token) return null;
-    const { payload } = await jwtVerify(token, secret);
-    return payload.userId as number;
-  } catch (err) {
-    console.error("Auth error:", err);
-    return null;
-  }
-}
-
-export function unauthorizedResponse() {
-  return Response.json({ error: "Unauthorized" }, { status: 401 });
-}
+// ================= TYPES =================
 
 export type TokenPayload = {
-  role:    "admin" | "agent";
-  userId:  number;
+  id :number ,
+  role: "super_admin" | "admin" | "agent";
+  userId: number;
   agentId: number | null;
-  name:    string;
-  email:   string;
+  name: string;
+  email: string;
 };
+
+// ================= GET TOKEN =================
 
 export async function getTokenPayload(req: NextRequest): Promise<TokenPayload | null> {
   try {
     const token = req.cookies.get("token")?.value;
     if (!token) return null;
+
     const { payload } = await jwtVerify(token, secret);
+
     return {
-      role:    (payload.role as string) === "agent" ? "agent" : "admin",
-      userId:  payload.userId  as number,
+      id: payload.userId as number,
+      role:
+        payload.role === "super_admin"
+          ? "super_admin"
+          : payload.role === "agent"
+          ? "agent"
+          : "admin",
+      userId: payload.userId as number,
       agentId: (payload.agentId as number) ?? null,
-      name:    (payload.name   as string)  ?? "",
-      email:   (payload.email  as string)  ?? "",
+      name: (payload.name as string) ?? "",
+      email: (payload.email as string) ?? "",
     };
   } catch (err) {
     console.error("Auth error:", err);
@@ -82,24 +79,77 @@ export async function getTokenPayload(req: NextRequest): Promise<TokenPayload | 
   }
 }
 
-export async function getAgentId(req: NextRequest): Promise<number | null> {
-  const payload = await getTokenPayload(req);
-  if (!payload || payload.role !== "agent") return null;
-  return payload.agentId;
+// ================= ROLE CHECK =================
+
+export async function requireSuperAdmin(req: NextRequest) {
+  const user = await getTokenPayload(req);
+  if (!user || user.role !== "super_admin") {
+    throw new Error("Unauthorized");
+  }
+  return user;
 }
 
-export async function signAgentToken(agent: {
-  id:     number;
-  userId: number;
-  name:   string;
-  email:  string;
-}): Promise<string> {
+export async function requireAdmin(req: NextRequest) {
+  const user = await getTokenPayload(req);
+  if (!user || (user.role !== "admin" && user.role !== "super_admin")) {
+    throw new Error("Unauthorized");
+  }
+  return user;
+}
+
+export async function requireAgent(req: NextRequest) {
+  const user = await getTokenPayload(req);
+  if (!user || user.role !== "agent") {
+    throw new Error("Unauthorized");
+  }
+  return user;
+}
+
+
+
+export async function requireAuth(req: NextRequest): Promise<TokenPayload> {
+  const user = await getTokenPayload(req);
+  if (!user) {
+    throw new Error("Unauthorized");
+  }
+  return user;
+}
+
+// ================= TOKEN GENERATORS =================
+
+export async function signSuperAdminToken(user: any) {
   return new SignJWT({
-    role:    "agent",
+    role: "super_admin",
+    userId: user.id,
+    agentId: null,
+    name: user.name,
+    email: user.email,
+  })
+    .setProtectedHeader({ alg: "HS256" })
+    .setExpirationTime("7d")
+    .sign(secret);
+}
+
+export async function signAdminToken(user: any) {
+  return new SignJWT({
+    role: "admin",
+    userId: user.id,
+    agentId: null,
+    name: user.name,
+    email: user.email,
+  })
+    .setProtectedHeader({ alg: "HS256" })
+    .setExpirationTime("7d")
+    .sign(secret);
+}
+
+export async function signAgentToken(agent: any) {
+  return new SignJWT({
+    role: "agent",
+    userId: agent.userId,
     agentId: agent.id,
-    userId:  agent.userId,
-    name:    agent.name,
-    email:   agent.email,
+    name: agent.name,
+    email: agent.email,
   })
     .setProtectedHeader({ alg: "HS256" })
     .setExpirationTime("7d")

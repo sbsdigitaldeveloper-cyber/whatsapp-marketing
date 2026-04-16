@@ -1,14 +1,18 @@
 // app/api/agents/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getUserId } from "@/lib/auth";
+import { getTokenPayload } from "@/lib/auth";
 // import bcrypt from "bcryptjs";
 
 // GET /api/agents — list all agents for this user (admin only)
 export async function GET(req: NextRequest) {
-  const userId = await getUserId(req);
-  if (!userId)
+   const payload = await getTokenPayload(req);
+
+  if (!payload) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const userId = payload.userId; 
 
   const agents = await prisma.agent.findMany({
     where: { userId },
@@ -29,9 +33,13 @@ export async function GET(req: NextRequest) {
 
 // POST /api/agents — create a new agent (admin only)
 export async function POST(req: NextRequest) {
-  const userId = await getUserId(req);
-  if (!userId)
+ const payload = await getTokenPayload(req);
+
+  if (!payload) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const userId = payload.userId; 
 
   try {
     const { name, email, password } = await req.json();

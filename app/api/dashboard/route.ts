@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getUserId } from "@/lib/auth";
+import { getTokenPayload} from "@/lib/auth";
 import { getMessages } from "@/lib/server/messages";
 
 function pct(num: number, den: number) {
@@ -15,11 +15,15 @@ function fmtNum(n: number) {
 
 export async function GET(req: NextRequest) {
   try {
-    const userId = await getUserId(req);
+    
 
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+      const payload = await getTokenPayload(req);
+
+  if (!payload) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const userId = payload.userId; 
 
     // =========================
     // ✅ GET ALL MESSAGES

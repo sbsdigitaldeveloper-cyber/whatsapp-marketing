@@ -38,7 +38,12 @@ export default function LoginPage() {
       localStorage.setItem("email", data.email ?? "");
 
       // ✅ Redirect to dashboard
-      router.push("/dashboard");
+      // router.push("/dashboard");
+      if (data.role === "super_admin") {
+  router.push("/super-admin/dashboard");
+} else {
+  router.push("/dashboard");
+}
 
     } catch (err) {
       setMessage("Something went wrong. Try again.");

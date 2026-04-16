@@ -1,43 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import jwt from "jsonwebtoken";
-import { getUserId } from "@/lib/auth";
+import { getTokenPayload } from "@/lib/auth";
 
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
-// Code
-const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
-const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
-const WHATSAPP_VERSION = process.env.WHATSAPP_VERSION || "v19.0";
-
-// function getUserId(req: NextRequest): number | null {
-//   const auth = req.headers.get("authorization");
-//   if (!auth) return null;
-//   try {
-//     const token = auth.replace("Bearer ", "");
-//     const decoded = jwt.verify(token, JWT_SECRET) as { userId: number };
-//     return decoded.userId;
-//   } catch {
-//     return null;
-//   }
-// }
-
-// Send single WhatsApp message
-async function sendWhatsAppMessage(phone: string, message: string) {
-  if (!WHATSAPP_TOKEN || !PHONE_NUMBER_ID) {
-    return {
-      ok: false,
-      error: "WhatsApp credentials not configured",
-    };
-  }
-
-  const url = `https://graph.facebook.com/${WHATSAPP_VERSION}/${PHONE_NUMBER_ID}/messages`;
+// Send single WhatsApp message (Dynamic Config ke saath)
+async function sendWhatsAppMessage(
+  phone: string, 
+  message: string, 
+  config: { accessToken: string; phoneNumberId: string }
+) {
+  const version = process.env.WHATSAPP_VERSION || "v21.0";
+  const url = `https://graph.facebook.com/${version}/${config.phoneNumberId}/messages`;
 
   try {
     const res = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+        Authorization: `Bearer ${config.accessToken}`,
       },
       body: JSON.stringify({
         messaging_product: "whatsapp",
@@ -50,7 +29,6 @@ async function sendWhatsAppMessage(phone: string, message: string) {
     const data = await res.json();
 
     if (!res.ok) {
-      console.error("WhatsApp API Error:", data);
       return {
         ok: false,
         error: data.error?.message || "Failed to send",
@@ -60,7 +38,6 @@ async function sendWhatsAppMessage(phone: string, message: string) {
 
     return { ok: true, data };
   } catch (error: any) {
-    console.error("Network error:", error);
     return {
       ok: false,
       error: error.message || "Network error",
@@ -70,47 +47,65 @@ async function sendWhatsAppMessage(phone: string, message: string) {
 
 // POST - Send single message
 export async function POST(req: NextRequest) {
-  const userId = getUserId(req);
-  if (!userId)
+  const payload = await getTokenPayload(req);
+
+  if (!payload || !payload.userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const userId = payload.userId;
 
   try {
     const { phone, message, messageId } = await req.json();
 
     if (!phone || !message) {
       return NextResponse.json(
-        { error: "phone and message are required" },
+        { error: "Phone and message are required" },
         { status: 400 }
       );
     }
 
-    // Send message
-    const result = await sendWhatsAppMessage(phone, message);
+    // 1. User ka WhatsApp Configuration fetch karein
+    const userConfig = await prisma.whatsAppConfig.findUnique({
+      where: { userId: userId },
+    });
 
-    // If messageId provided, update status in DB
+    if (!userConfig || !userConfig.isActive) {
+      return NextResponse.json(
+        { error: "WhatsApp credentials not configured or inactive" },
+        { status: 400 }
+      );
+    }
+
+    // 2. Message bhejein User ke credentials use karke
+    const result = await sendWhatsAppMessage(phone, message, {
+      accessToken: userConfig.accessToken,
+      phoneNumberId: userConfig.phoneNumberId,
+    });
+
+    // 3. Status update karein DB mein
     if (messageId) {
-      try {
-        await prisma.message.update({
-          where: { id: Number(messageId) },
-          data: {
-            status: result.ok ? "SENT" : "FAILED",
-            sentAt: result.ok ? new Date() : null,
-          },
-        });
-      } catch (error) {
-        console.error("Failed to update message status:", error);
-      }
+      await prisma.message.update({
+        where: { id: Number(messageId) },
+        data: {
+          status: result.ok ? "SENT" : "FAILED",
+          sentAt: result.ok ? new Date() : null,
+          errorReason: result.ok ? null : result.error,
+          whatsappMsgId: result.data?.messages?.[0]?.id || null,
+        },
+      });
     }
 
     return NextResponse.json({
       success: result.ok,
       error: result.error,
-      data: result.data,
+      waId: result.data?.messages?.[0]?.id
     });
+
   } catch (error: any) {
     console.error("Send single message error:", error);
     return NextResponse.json(
-      { error: error.message || "Failed to send message" },
+      { error: error.message || "Internal Server Error" },
       { status: 500 }
     );
   }

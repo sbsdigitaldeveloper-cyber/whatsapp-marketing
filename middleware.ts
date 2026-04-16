@@ -72,14 +72,22 @@ import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
+const secret = new TextEncoder().encode(JWT_SECRET);
 
-// Admin protected routes
+// ================= ROUTES =================
+
+// Super Admin
+const superAdminProtected = ["/super-admin"];
+
+// Admin (Client)
 const adminProtected = ["/dashboard"];
 const adminAuthRoutes = ["/login", "/register"];
 
-// Agent protected routes
-const agentProtected  = ["/agent/dashboard"];
+// Agent
+const agentProtected = ["/agent/dashboard"];
 const agentAuthRoutes = ["/agent/login"];
+
+// ================= MIDDLEWARE =================
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
@@ -88,102 +96,131 @@ export async function middleware(req: NextRequest) {
     req.cookies.get("token")?.value ||
     req.cookies.get("auth_token")?.value;
 
-  console.log("🔍 Middleware hit:", pathname);
-  console.log("🔍 Token found:", !!token);
+  console.log("🔍 Path:", pathname);
+  console.log("🔍 Token:", !!token);
 
-  const secret = new TextEncoder().encode(JWT_SECRET);
-
-  // ── Helper: verify token and return payload ──────────
+  // ===== Helper: Verify Token =====
   async function getPayload() {
     if (!token) return null;
+
     try {
       const { payload } = await jwtVerify(token, secret);
       return payload;
-    } catch {
+    } catch (err) {
+      console.log("❌ Invalid token");
       return null;
     }
   }
 
-  // ── Helper: clear cookies and redirect ───────────────
+  // ===== Helper: Redirect + Clear Cookie =====
   function redirectWithClear(url: string) {
     const res = NextResponse.redirect(new URL(url, req.url));
-    res.cookies.set("token",      "", { maxAge: 0, path: "/" });
+
+    res.cookies.set("token", "", { maxAge: 0, path: "/" });
     res.cookies.set("auth_token", "", { maxAge: 0, path: "/" });
+
     return res;
   }
 
-  // ════════════════════════════════════════════════════
-  // 1. ADMIN protected routes  (/dashboard/...)
-  // ════════════════════════════════════════════════════
+  // ===== Helper: Simple Redirect =====
+  function redirect(url: string) {
+    return NextResponse.redirect(new URL(url, req.url));
+  }
+
+  const payload = await getPayload();
+
+  // =========================================================
+  // 👑 1. SUPER ADMIN PROTECTED
+  // =========================================================
+  if (superAdminProtected.some((r) => pathname.startsWith(r))) {
+    if (!payload) return redirectWithClear("/login");
+
+    if (payload.role !== "super_admin") {
+      return redirect("/dashboard");
+    }
+
+    return NextResponse.next();
+  }
+
+  // =========================================================
+  // 👤 2. ADMIN PROTECTED
+  // =========================================================
   if (adminProtected.some((r) => pathname.startsWith(r))) {
-    const payload = await getPayload();
+    if (!payload) return redirectWithClear("/login");
 
-    if (!payload) {
-      console.log("❌ No token — redirecting to /login");
-      return NextResponse.redirect(new URL("/login", req.url));
-    }
-
-    // Agent trying to access admin dashboard → send to agent dashboard
     if (payload.role === "agent") {
-      console.log("⛔ Agent tried admin route — redirecting to /agent/dashboard");
-      return NextResponse.redirect(new URL("/agent/dashboard", req.url));
+      return redirect("/agent/dashboard");
     }
 
-    console.log("✅ Admin token valid — allowing access");
+    if (payload.role === "super_admin") {
+      return redirect("/super-admin/dashboard");
+    }
+
     return NextResponse.next();
   }
 
-  // ════════════════════════════════════════════════════
-  // 2. ADMIN auth routes (/login, /register)
-  //    If already logged in → redirect to correct dashboard
-  // ════════════════════════════════════════════════════
+  // =========================================================
+  // 🔐 3. ADMIN AUTH ROUTES (/login, /register)
+  // =========================================================
   if (adminAuthRoutes.some((r) => pathname.startsWith(r))) {
-    const payload = await getPayload();
     if (payload) {
-      const dest = payload.role === "agent" ? "/agent/dashboard" : "/dashboard";
-      console.log("✅ Already logged in — redirecting to", dest);
-      return NextResponse.redirect(new URL(dest, req.url));
+      if (payload.role === "super_admin") {
+        return redirect("/super-admin/dashboard");
+      }
+
+      if (payload.role === "agent") {
+        return redirect("/agent/dashboard");
+      }
+
+      return redirect("/dashboard");
     }
+
     return NextResponse.next();
   }
 
-  // ════════════════════════════════════════════════════
-  // 3. AGENT protected routes (/agent/dashboard/...)
-  // ════════════════════════════════════════════════════
+  // =========================================================
+  // 👨‍💼 4. AGENT PROTECTED
+  // =========================================================
   if (agentProtected.some((r) => pathname.startsWith(r))) {
-    const payload = await getPayload();
+    if (!payload) return redirectWithClear("/agent/login");
 
-    if (!payload) {
-      console.log("❌ No token — redirecting to /agent/login");
-      return NextResponse.redirect(new URL("/agent/login", req.url));
-    }
-
-    // Admin trying to access agent dashboard → send to admin dashboard
     if (payload.role !== "agent") {
-      console.log("⛔ Admin tried agent route — redirecting to /dashboard");
-      return NextResponse.redirect(new URL("/dashboard", req.url));
+      if (payload.role === "super_admin") {
+        return redirect("/super-admin/dashboard");
+      }
+
+      return redirect("/dashboard");
     }
 
-    console.log("✅ Agent token valid — allowing access");
     return NextResponse.next();
   }
 
-  // ════════════════════════════════════════════════════
-  // 4. AGENT auth route (/agent/login)
-  //    If already logged in → redirect to correct dashboard
-  // ════════════════════════════════════════════════════
+  // =========================================================
+  // 🔐 5. AGENT AUTH ROUTES
+  // =========================================================
   if (agentAuthRoutes.some((r) => pathname.startsWith(r))) {
-    const payload = await getPayload();
     if (payload) {
-      const dest = payload.role === "agent" ? "/agent/dashboard" : "/dashboard";
-      console.log("✅ Already logged in — redirecting to", dest);
-      return NextResponse.redirect(new URL(dest, req.url));
+      if (payload.role === "super_admin") {
+        return redirect("/super-admin/dashboard");
+      }
+
+      if (payload.role === "agent") {
+        return redirect("/agent/dashboard");
+      }
+
+      return redirect("/dashboard");
     }
+
     return NextResponse.next();
   }
 
+  // =========================================================
+  // ✅ DEFAULT
+  // =========================================================
   return NextResponse.next();
 }
+
+// ================= MATCHER =================
 
 export const config = {
   matcher: [

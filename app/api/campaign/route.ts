@@ -49,12 +49,16 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getUserId } from "@/lib/auth";
+import { getTokenPayload,  } from "@/lib/auth";
 
 export async function GET(req: NextRequest) {
-  const userId = await getUserId(req);
-  if (!userId)
+  const payload = await getTokenPayload(req);
+
+  if (!payload) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const userId = payload.userId; // ✅ FIX
 
   const campaigns = await prisma.campaign.findMany({
     where: { userId },
@@ -67,33 +71,40 @@ export async function GET(req: NextRequest) {
     },
   });
 
-  // ✅ Stats calculate karo har campaign ke liye
+  // ✅ Stats calculate
   const result = campaigns.map((c) => ({
     ...c,
     stats: {
-      sent:      c.messages.filter((m) => m.status === "SENT").length,
+      sent: c.messages.filter((m) => m.status === "SENT").length,
       delivered: c.messages.filter((m) => m.status === "DELIVERED").length,
-      read:      c.messages.filter((m) => m.status === "READ").length,
-      failed:    c.messages.filter((m) => m.status === "FAILED").length,
+      read: c.messages.filter((m) => m.status === "READ").length,
+      failed: c.messages.filter((m) => m.status === "FAILED").length,
     },
-    messages: undefined, // Frontend ko raw messages mat bhejo
+    messages: undefined,
   }));
 
   return NextResponse.json(result);
 }
 
+// ================= POST =================
+
 export async function POST(req: NextRequest) {
-  const userId = await getUserId(req);
-  if (!userId)
+  const payload = await getTokenPayload(req);
+
+  if (!payload) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const userId = payload.userId; // ✅ FIX
 
   const { name, message } = await req.json();
 
-  if (!name || !message)
+  if (!name || !message) {
     return NextResponse.json(
       { error: "Name and message required" },
       { status: 400 }
     );
+  }
 
   const campaign = await prisma.campaign.create({
     data: {

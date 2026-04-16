@@ -1,12 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getUserId } from "@/lib/auth"; // ✅ import shared auth helper
+import { getTokenPayload } from "@/lib/auth"; // ✅ import shared auth helper
 
 // GET - Fetch all contacts for logged-in user
 export async function GET(req: NextRequest) {
-  const userId = await getUserId(req); // ✅ await added
-  if (!userId)
+
+
+  const payload = await getTokenPayload(req);
+
+  if (!payload) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+    const userId = payload.userId; 
 
   try {
     const contacts = await prisma.contact.findMany({
@@ -29,9 +35,13 @@ export async function GET(req: NextRequest) {
 
 // POST - Add contacts (single or bulk)
 export async function POST(req: NextRequest) {
-  const userId = await getUserId(req); // ✅ await added
-  if (!userId)
+    const payload = await getTokenPayload(req);
+
+  if (!payload) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+    const userId = payload.userId; 
 
   try {
     const { contacts } = await req.json();
@@ -87,9 +97,13 @@ export async function POST(req: NextRequest) {
 
 // DELETE - Delete a contact
 export async function DELETE(req: NextRequest) {
-  const userId = await getUserId(req); // ✅ await added
-  if (!userId)
+   const payload = await getTokenPayload(req);
+
+  if (!payload) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+    const userId = payload.userId; 
 
   try {
     const { id } = await req.json();

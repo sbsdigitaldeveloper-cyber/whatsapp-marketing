@@ -1,7 +1,7 @@
 // app/api/contacts/[id]/assign/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getUserId } from "@/lib/auth";
+import {  getTokenPayload } from "@/lib/auth";
 
 // PATCH /api/contacts/:id/assign
 // Body: { agentId: number | null }
@@ -10,9 +10,13 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const userId = await getUserId(req);
-  if (!userId)
+    const payload = await getTokenPayload(req);
+
+  if (!payload) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const userId = payload.userId; 
 
   const { id } = await params;
 

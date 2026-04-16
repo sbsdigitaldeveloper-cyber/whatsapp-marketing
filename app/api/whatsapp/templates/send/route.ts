@@ -1,13 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { enqueueBulkMessages } from "@/lib/queue";
-import { getUserId } from "@/lib/auth";
+import { getTokenPayload} from "@/lib/auth";
 import { spawn } from "child_process";
 
 export async function POST(req: NextRequest) {
-  const userId = await getUserId(req);
-  if (!userId)
+  const payload = await getTokenPayload(req);
+
+  if (!payload) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const userId = payload.userId; 
 
   try {
     const {
@@ -64,6 +68,7 @@ export async function POST(req: NextRequest) {
     // ✅ Bulk insert — 1 query mein saare messages
     await prisma.message.createMany({
       data: contacts.map((contact) => ({
+        userId :userId ,
         campaignId: campaign.id,
         contactId:  contact.id,
         status:     "PENDING",

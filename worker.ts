@@ -407,47 +407,41 @@
 
 
 import dotenv from "dotenv";
+import { Worker, Job } from "bullmq";
+import { prisma } from "./lib/prisma";
+
+// Load environment variables
 dotenv.config({ 
   path: process.env.NODE_ENV === "production" ? ".env" : ".env.local" 
 });
 
-import { Worker, Job } from "bullmq";
-import { prisma } from "./lib/prisma";
-
-const WHATSAPP_TOKEN   = process.env.WHATSAPP_TOKEN!;
-const PHONE_NUMBER_ID  = process.env.PHONE_NUMBER_ID!;
-const WHATSAPP_VERSION = process.env.WHATSAPP_VERSION || "v18.0";
-const WA_URL           = `https://graph.facebook.com/${WHATSAPP_VERSION}/${PHONE_NUMBER_ID}/messages`;
-
-const WA_HEADERS = {
-  "Content-Type": "application/json",
-  Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-};
-
 // ---------------------------------------------------------
-// WhatsApp API Call
+// WhatsApp API Call (SaaS Version)
 // ---------------------------------------------------------
-async function callWhatsAppAPI(payload: object) {
-  const res  = await fetch(WA_URL, {
-    method:  "POST",
-    headers: WA_HEADERS,
-    body:    JSON.stringify(payload),
+async function callWhatsAppAPI(payload: object, phoneId: string, token: string) {
+  const version = process.env.WHATSAPP_VERSION || "v21.0";
+  const url = `https://graph.facebook.com/${version}/${phoneId}/messages`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
   });
+
   const data = await res.json();
-  if (!res.ok) throw new Error(data?.error?.message || "WhatsApp API Error");
+  if (!res.ok) {
+    throw new Error(data?.error?.message || "WhatsApp API Error");
+  }
   return data;
 }
 
 // ---------------------------------------------------------
-// Build Payload
+// Build Payload for Meta API
 // ---------------------------------------------------------
-function buildPayload(phone: string, campaign: {
-  messageType:      string;
-  templateName?:    string | null;
-  templateLanguage?: string | null;
-  templateParams?:  string | null;
-  message?:         string | null;
-}) {
+function buildPayload(phone: string, campaign: any) {
   const base = { messaging_product: "whatsapp", to: phone };
 
   if (campaign.messageType === "TEMPLATE") {
@@ -458,8 +452,8 @@ function buildPayload(phone: string, campaign: {
       ...base,
       type: "template",
       template: {
-        name:     campaign.templateName,
-        language: { code: campaign.templateLanguage || "en" },
+        name: campaign.templateName,
+        language: { code: campaign.templateLanguage || "en_US" },
         components: params.length > 0
           ? [{
               type: "body",
@@ -474,177 +468,146 @@ function buildPayload(phone: string, campaign: {
 }
 
 // ---------------------------------------------------------
-// Campaign Status Update — Jab sab messages process ho jayein
+// Campaign Stats & Status Manager
 // ---------------------------------------------------------
 async function updateCampaignStatus(campaignId: number) {
   try {
     const allMessages = await prisma.message.findMany({
-      where:  { campaignId },
+      where: { campaignId },
       select: { status: true },
     });
 
-    const total   = allMessages.length;
-    const pending = allMessages.filter((m) =>
-      m.status === "PENDING" || m.status === "DRAFT"
+    const total = allMessages.length;
+    // PENDING ya QUEUED matlab abhi kaam baki hai
+    const pendingCount = allMessages.filter((m) => 
+      ["PENDING", "QUEUED"].includes(m.status)
     ).length;
-    const failed  = allMessages.filter((m) => m.status === "FAILED").length;
 
-    // ✅ Sirf tab update karo jab sab process ho gaye
-    if (pending === 0) {
+    if (pendingCount === 0) {
+      const failedCount = allMessages.filter((m) => m.status === "FAILED").length;
+      
       const finalStatus =
-        failed === total ? "FAILED"   :
-        failed > 0       ? "PARTIAL"  : "COMPLETED";
+        failedCount === total ? "FAILED" :
+        failedCount > 0 ? "PARTIAL" : "COMPLETED";
 
       await prisma.campaign.update({
         where: { id: campaignId },
-        data:  { status: finalStatus },
+        data: { status: finalStatus },
       });
 
-      console.log(`📊 Campaign ${campaignId} → ${finalStatus}`);
+      console.log(`📊 Campaign ${campaignId} finished with status: ${finalStatus}`);
     }
   } catch (err: any) {
-    console.error("Campaign status update error:", err.message);
+    console.error("❌ Campaign status update error:", err.message);
   }
 }
 
 // ---------------------------------------------------------
-// Worker
+// The Worker Logic
 // ---------------------------------------------------------
 const worker = new Worker(
   "whatsapp-messages",
   async (job: Job) => {
     const { messageId } = job.data;
 
-    // ✅ Single DB query
+    // Fetch message with RELATIONS (Fixes the property doesn't exist error)
     const message = await prisma.message.findUnique({
-      where:  { id: messageId },
-      select: {
-        id:       true,
-        campaignId: true,
-        contact:  { select: { phone: true, optIn: true } },
-        campaign: {
-          select: {
-            messageType:      true,
-            templateName:     true,
-            templateLanguage: true,
-            templateParams:   true,
-            message:          true,
-          },
-        },
+      where: { id: messageId },
+      include: {
+        contact: true,
+        campaign: true,
+        user: {
+          include: { whatsappConfig: true }
+        }
       },
     });
 
-    // ✅ Guard — missing data
-    if (!message?.contact || !message?.campaign) {
-      console.warn(`⚠️ Message ${messageId} missing contact/campaign — skipping`);
-      return;
+    // Guard Checks
+    if (!message) return;
+    if (!message.user.whatsappConfig || !message.user.whatsappConfig.isActive) {
+      throw new Error("Client WhatsApp API not configured or inactive");
     }
-
-    // ✅ Opted out check
-    if (!message.contact.optIn) {
+    if (!message.contact?.optIn) {
       await prisma.message.update({
         where: { id: messageId },
-        data:  { status: "FAILED", errorReason: "Contact opted out" },
+        data: { status: "FAILED", errorReason: "Contact opted out" },
       });
       return;
     }
 
     try {
-      const payload  = buildPayload(message.contact.phone, message.campaign);
-      const response = await callWhatsAppAPI(payload);
-      const waId     = response?.messages?.[0]?.id;
+      const payload = buildPayload(message.contact.phone, message.campaign);
+      const { phoneNumberId, accessToken } = message.user.whatsappConfig;
+
+      const response = await callWhatsAppAPI(payload, phoneNumberId, accessToken);
+      const waId = response?.messages?.[0]?.id;
 
       await prisma.message.update({
         where: { id: messageId },
-        data:  { status: "SENT", sentAt: new Date(), whatsappMsgId: waId },
-      });
-
-      console.log(`✅ Message ${messageId} sent — WA_ID: ${waId}`);
-
-    } catch (err: any) {
-      console.error(`❌ Job ${job.id} failed:`, err.message);
-
-      await prisma.message.update({
-        where: { id: messageId },
-        data:  {
-          status:      "FAILED",
-          errorReason: err.message,
-          retryCount:  job.attemptsMade,
+        data: { 
+          status: "SENT", 
+          sentAt: new Date(), 
+          whatsappMsgId: waId,
+          errorReason: null 
         },
       });
 
-      throw err;
+      console.log(`✅ Sent: Message ${messageId} to ${message.contact.phone}`);
+
+    } catch (err: any) {
+      console.error(`❌ Message ${messageId} failed:`, err.message);
+      await prisma.message.update({
+        where: { id: messageId },
+        data: {
+          status: "FAILED",
+          errorReason: err.message,
+        },
+      });
+      throw err; // Re-throw for BullMQ attempts
     }
   },
   {
     connection: {
-      url:                  process.env.REDIS_URL!,
-      enableOfflineQueue:   false,
-      maxRetriesPerRequest: null,   // ✅ BullMQ ke liye null
+      host: "127.0.0.1",
+      port: 6379,
+      db: 0,
+      maxRetriesPerRequest: null,
     },
-    concurrency:     2,
-    lockDuration:    30_000,
-    stalledInterval: 300_000,
-    maxStalledCount: 1,
+    concurrency: 10, // Ek saath 10 messages process honge
     limiter: {
-      max:      5,
+      max: 20, // Meta API limits ke liye safe
       duration: 1000,
     },
   }
 );
 
 // ---------------------------------------------------------
-// Events
+// Worker Events
 // ---------------------------------------------------------
 worker.on("completed", async (job) => {
-  const { messageId } = job.data;
+  const msg = await prisma.message.findUnique({
+    where: { id: job.data.messageId },
+    select: { campaignId: true }
+  });
+  if (msg?.campaignId) await updateCampaignStatus(msg.campaignId);
+});
 
-  try {
-    // ✅ Campaign ID nikalo
-    const message = await prisma.message.findUnique({
-      where:  { id: messageId },
-      select: { campaignId: true },
+worker.on("failed", async (job) => {
+  if (job?.data?.messageId) {
+    const msg = await prisma.message.findUnique({
+      where: { id: job.data.messageId },
+      select: { campaignId: true }
     });
-
-    if (!message?.campaignId) return;
-
-    // ✅ Campaign status update karo
-    await updateCampaignStatus(message.campaignId);
-
-  } catch (err: any) {
-    console.error("Completed event error:", err.message);
+    if (msg?.campaignId) await updateCampaignStatus(msg.campaignId);
   }
 });
 
-worker.on("failed", async (job, err) => {
-  console.error(`💀 Final failure — job ${job?.id}: ${err.message}`);
-
-  // ✅ Failed hone pe bhi campaign status check karo
-  if (job?.data?.messageId) {
-    try {
-      const message = await prisma.message.findUnique({
-        where:  { id: job.data.messageId },
-        select: { campaignId: true },
-      });
-      if (message?.campaignId) {
-        await updateCampaignStatus(message.campaignId);
-      }
-    } catch (e: any) {
-      console.error("Failed event error:", e.message);
-    }
-  }
+worker.on("drained", () => {
+  console.log("☕ Queue is empty. Keeping worker alive for next jobs...");
 });
 
 worker.on("error", (err) => {
-  console.error("Worker error:", err.message);
+  console.error("🔥 Worker global error:", err);
 });
 
-// ✅ Queue empty hone pe worker band ho
-worker.on("drained", async () => {
-  console.log("✅ Queue empty — worker band ho raha hai");
-  await worker.close();
-  await prisma.$disconnect();
-  process.exit(0);
-});
-
-console.log("🚀 Worker running — concurrency:10, rate:20/s, stalledInterval:5min");
+console.log("🚀 WhatsApp Worker is running on Local Redis (DB 0)");

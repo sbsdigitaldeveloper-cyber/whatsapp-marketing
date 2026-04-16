@@ -1,15 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getUserId } from "@/lib/auth"; // ✅ import shared auth helper
+import { getTokenPayload, } from "@/lib/auth"; // ✅ import shared auth helper
 
 export async function GET(req: NextRequest) {
   try {
     // ── 1. Auth: get current user ─────────────────────────────────────────
-    const userId = await getUserId(req); // ✅ await added (async now)
+    // const userId = await getUserId(req); // ✅ await added (async now)
 
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+     const payload = await getTokenPayload(req);
+    
+      if (!payload) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+    
+      const userId = payload.userId; 
+
+   
 
     // ── 2. Optional filters from query params ─────────────────────────────
     const { searchParams } = new URL(req.url);
