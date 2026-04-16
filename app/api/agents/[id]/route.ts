@@ -1,16 +1,20 @@
 // app/api/agents/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getUserId } from "@/lib/auth";
+import { getTokenPayload } from "@/lib/auth";
 
 // DELETE /api/agents/:id — delete agent (admin only)
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const userId = await getUserId(req);
-  if (!userId)
+   const payload = await getTokenPayload(req);
+
+  if (!payload || !payload.userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const userId = payload.userId;
 
   const { id } = await params;
 
