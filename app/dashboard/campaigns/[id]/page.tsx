@@ -1,40 +1,37 @@
-// // app/dashboard/campaigns/[id]/page.tsx
-// import CampaignDetail from "./CampaignDetail";
-// import { prisma } from "@/lib/prisma";
+// // app/campaigns/[id]/page.tsx
 
-// interface Props {
-//   params: { id: string } | Promise<{ id: string }>;
+// import { cookies } from "next/headers";
+// import { redirect } from "next/navigation";
+// import CampaignDetail from "./CampaignDetail";
+
+
+// interface PageProps {
+//   params: Promise<{ id: string }>;
 // }
 
-// export default async function Page({ params }: Props) {
-//   // unwrap params if it's a promise
-//   const resolvedParams = await params;
-//   const campaignId = Number(resolvedParams.id);
+// export default async function CampaignPage({ params }: PageProps) {
+//   const { id } = await params;
 
-//   if (isNaN(campaignId)) {
-//     return <p>Invalid campaign ID</p>;
+//   const cookieStore = await cookies();
+//   const token = cookieStore.get("token")?.value;
+
+//   if (!token) {
+//     redirect("/login");
 //   }
 
-//   // fetch campaign from DB
-//   const campaign = await prisma.campaign.findUnique({
-//     where: { id: campaignId },
+//   const res = await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/campaign/${id}`, {
+//     headers: {
+//       Authorization: `Bearer ${token}`,
+//     },
+//     cache: "no-store",
 //   });
 
-//   if (!campaign) {
-//     return <p>Campaign not found</p>;
+//   if (!res.ok) {
+//     redirect("/campaigns"); // or show a 404 page
 //   }
 
-//   // fetch all contacts for the campaign's user
-//   const contactsRaw = await prisma.contact.findMany({
-//     where: { userId: campaign.userId },
-//     orderBy: { createdAt: "desc" },
-//   });
-
-//   // convert null names to undefined
-//   const contacts = contactsRaw.map((c) => ({
-//     ...c,
-//     name: c.name ?? undefined,
-//   }));
+//   // ✅ Correctly destructure — API returns { campaign, contacts, stats }
+//   const { campaign, contacts } = await res.json();
 
 //   return <CampaignDetail campaign={campaign} contacts={contacts} />;
 // }
@@ -43,7 +40,7 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 
@@ -67,10 +64,11 @@ interface Campaign {
   templateName: string | null;
   messageType: string;
   createdAt: string;
-  messages: Message[];
+  messages: Message[]; // ✅ must match API response key
   stats: {
     total: number;
     pending: number;
+    queued: number;   // ✅ added missing field
     sent: number;
     delivered: number;
     read: number;
@@ -78,14 +76,21 @@ interface Campaign {
   };
 }
 
-const msgStatusConfig: Record<string, { emoji: string; label: string; classes: string }> = {
-  PENDING:   { emoji: "⏳", label: "Pending",   classes: "bg-gray-100 text-gray-500" },
-  DRAFT:     { emoji: "📝", label: "Draft",     classes: "bg-gray-100 text-gray-500" },
-  SENT:      { emoji: "📤", label: "Sent",      classes: "bg-blue-100 text-blue-700" },
-  DELIVERED: { emoji: "✅", label: "Delivered", classes: "bg-emerald-100 text-emerald-700" },
-  READ:      { emoji: "👁️", label: "Read",      classes: "bg-purple-100 text-purple-700" },
-  FAILED:    { emoji: "❌", label: "Failed",    classes: "bg-red-100 text-red-700" },
-};
+// const msgStatusConfig: Record
+//   string,
+//   { emoji: string; label: string; classes: string }
+// > = {
+//   PENDING:   { emoji: "⏳", label: "Pending",   classes: "bg-gray-100 text-gray-500" },
+//   DRAFT:     { emoji: "📝", label: "Draft",     classes: "bg-gray-100 text-gray-500" },
+//   QUEUED:    { emoji: "🔄", label: "Queued",    classes: "bg-amber-100 text-amber-700" },
+//   SENT:      { emoji: "📤", label: "Sent",      classes: "bg-blue-100 text-blue-700" },
+//   DELIVERED: { emoji: "✅", label: "Delivered", classes: "bg-emerald-100 text-emerald-700" },
+//   READ:      { emoji: "👁️", label: "Read",      classes: "bg-purple-100 text-purple-700" },
+//   FAILED:    { emoji: "❌", label: "Failed",    classes: "bg-red-100 text-red-700" },
+// };
+
+
+const msgStatusConfig: Record<string, { emoji: string; label: string; classes: string }> = { PENDING: { emoji: "⏳", label: "Pending", classes: "bg-gray-100 text-gray-500" }, DRAFT: { emoji: "📝", label: "Draft", classes: "bg-gray-100 text-gray-500" }, SENT: { emoji: "📤", label: "Sent", classes: "bg-blue-100 text-blue-700" }, DELIVERED: { emoji: "✅", label: "Delivered", classes: "bg-emerald-100 text-emerald-700" }, READ: { emoji: "👁️", label: "Read", classes: "bg-purple-100 text-purple-700" }, FAILED: { emoji: "❌", label: "Failed", classes: "bg-red-100 text-red-700" }, };
 
 export default function CampaignDetailPage() {
   const { id } = useParams();
@@ -95,32 +100,43 @@ export default function CampaignDetailPage() {
   const [filter, setFilter] = useState("ALL");
   const [retrying, setRetrying] = useState(false);
 
-  async function fetchCampaign() {
+  // ✅ useCallback so it can be safely used in useEffect deps
+  const fetchCampaign = useCallback(async () => {
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(`/api/campaign/${id}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const data = await res.json();
+
+      if (!res.ok) {
+        console.error("Failed to fetch campaign:", res.status);
+        return;
+      }
+
+      const data: Campaign = await res.json();
       setCampaign(data);
     } catch (err) {
-      console.error(err);
+      console.error("fetchCampaign error:", err);
     } finally {
       setLoading(false);
     }
-  }
+  }, [id]);
 
-  useEffect(() => { fetchCampaign(); }, [id]);
+  useEffect(() => {
+    fetchCampaign();
+  }, [fetchCampaign]);
 
-  // ✅ Auto refresh jab SENDING/QUEUED ho
+  // ✅ Auto-refresh when campaign is actively sending/queued
   useEffect(() => {
     if (
       campaign?.status !== "SENDING" &&
       campaign?.status !== "QUEUED"
-    ) return;
+    )
+      return;
+
     const interval = setInterval(fetchCampaign, 5000);
     return () => clearInterval(interval);
-  }, [campaign?.status]);
+  }, [campaign?.status, fetchCampaign]);
 
   // ✅ Retry failed messages
   async function retryFailed() {
@@ -133,31 +149,38 @@ export default function CampaignDetailPage() {
       });
       if (res.ok) await fetchCampaign();
     } catch (err) {
-      console.error(err);
+      console.error("retryFailed error:", err);
     } finally {
       setRetrying(false);
     }
   }
 
-  if (loading) return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <div className="animate-pulse text-gray-400 text-sm">Loading campaign...</div>
-    </div>
-  );
+  if (loading)
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="animate-pulse text-gray-400 text-sm">
+          Loading campaign...
+        </div>
+      </div>
+    );
 
-  if (!campaign) return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <div className="text-gray-400">Campaign not found</div>
-    </div>
-  );
+  if (!campaign)
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-gray-400">Campaign not found</div>
+      </div>
+    );
 
   const date = new Date(campaign.createdAt).toLocaleDateString("en-IN", {
-    day: "numeric", month: "short", year: "numeric",
-    hour: "2-digit", minute: "2-digit",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 
-  // ✅ Filter + Search
-  const filteredMessages = campaign.messages.filter((m) => {
+  // ✅ Safe filter — campaign.messages is now always defined
+  const filteredMessages = (campaign.messages ?? []).filter((m) => {
     const matchesFilter = filter === "ALL" || m.status === filter;
     const matchesSearch =
       m.contact.name?.toLowerCase().includes(search.toLowerCase()) ||
@@ -165,16 +188,18 @@ export default function CampaignDetailPage() {
     return matchesFilter && matchesSearch;
   });
 
-  // ✅ Progress
-  const progress = campaign.stats.total > 0
-    ? Math.round(
-        ((campaign.stats.sent +
-          campaign.stats.delivered +
-          campaign.stats.read +
-          campaign.stats.failed) /
-          campaign.stats.total) * 100
-      )
-    : 0;
+  // Progress bar calculation
+  const progress =
+    campaign.stats.total > 0
+      ? Math.round(
+          ((campaign.stats.sent +
+            campaign.stats.delivered +
+            campaign.stats.read +
+            campaign.stats.failed) /
+            campaign.stats.total) *
+            100
+        )
+      : 0;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -192,44 +217,59 @@ export default function CampaignDetailPage() {
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 mb-4">
           <div className="flex items-start justify-between">
             <div>
-              <h1 className="text-xl font-bold text-gray-900">{campaign.name}</h1>
+              <h1 className="text-xl font-bold text-gray-900">
+                {campaign.name}
+              </h1>
               <p className="text-sm text-gray-400 mt-1">📅 {date}</p>
               {campaign.templateName && (
                 <p className="text-sm text-green-600 mt-1">
-                  📋 Template: <span className="font-medium">{campaign.templateName}</span>
+                  📋 Template:{" "}
+                  <span className="font-medium">{campaign.templateName}</span>
                 </p>
               )}
             </div>
 
             <div className="flex items-center gap-2">
               {/* Retry Button */}
-              {campaign.stats.failed > 0 && campaign.status === "COMPLETED" && (
-                <button
-                  onClick={retryFailed}
-                  disabled={retrying}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 font-medium"
-                >
-                  {retrying ? "Retrying..." : `🔄 Retry ${campaign.stats.failed} Failed`}
-                </button>
-              )}
+              {campaign.stats.failed > 0 &&
+                campaign.status === "COMPLETED" && (
+                  <button
+                    onClick={retryFailed}
+                    disabled={retrying}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 font-medium disabled:opacity-50"
+                  >
+                    {retrying
+                      ? "Retrying..."
+                      : `🔄 Retry ${campaign.stats.failed} Failed`}
+                  </button>
+                )}
 
               {/* Status Badge */}
-              <span className={`text-xs font-semibold px-3 py-1.5 rounded-full ${
-                campaign.status === "COMPLETED" ? "bg-emerald-100 text-emerald-700" :
-                campaign.status === "SENDING"   ? "bg-blue-100 text-blue-700 animate-pulse" :
-                campaign.status === "QUEUED"    ? "bg-amber-100 text-amber-700 animate-pulse" :
-                "bg-gray-100 text-gray-600"
-              }`}>
-                {campaign.status === "SENDING"   ? "📤 Sending..." :
-                 campaign.status === "QUEUED"    ? "🔄 Queued..." :
-                 campaign.status === "COMPLETED" ? "✅ Completed" :
-                 campaign.status}
+              <span
+                className={`text-xs font-semibold px-3 py-1.5 rounded-full ${
+                  campaign.status === "COMPLETED"
+                    ? "bg-emerald-100 text-emerald-700"
+                    : campaign.status === "SENDING"
+                    ? "bg-blue-100 text-blue-700 animate-pulse"
+                    : campaign.status === "QUEUED"
+                    ? "bg-amber-100 text-amber-700 animate-pulse"
+                    : "bg-gray-100 text-gray-600"
+                }`}
+              >
+                {campaign.status === "SENDING"
+                  ? "📤 Sending..."
+                  : campaign.status === "QUEUED"
+                  ? "🔄 Queued..."
+                  : campaign.status === "COMPLETED"
+                  ? "✅ Completed"
+                  : campaign.status}
               </span>
             </div>
           </div>
 
           {/* Progress Bar */}
-          {(campaign.status === "SENDING" || campaign.status === "QUEUED") && (
+          {(campaign.status === "SENDING" ||
+            campaign.status === "QUEUED") && (
             <div className="mt-4">
               <div className="flex justify-between text-xs text-gray-500 mb-1">
                 <span>Progress</span>
@@ -248,11 +288,46 @@ export default function CampaignDetailPage() {
         {/* Stats Cards */}
         <div className="grid grid-cols-3 md:grid-cols-5 gap-3 mb-4">
           {[
-            { label: "Total",     value: campaign.stats.total,     color: "text-gray-700",    bg: "bg-white",      border: "border-gray-100",    filter: "ALL" },
-            { label: "Sent",      value: campaign.stats.sent,      color: "text-blue-700",    bg: "bg-blue-50",    border: "border-blue-100",    filter: "SENT" },
-            { label: "Delivered", value: campaign.stats.delivered, color: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-100", filter: "DELIVERED" },
-            { label: "Read",      value: campaign.stats.read,      color: "text-purple-700",  bg: "bg-purple-50",  border: "border-purple-100",  filter: "READ" },
-            { label: "Failed",    value: campaign.stats.failed,    color: "text-red-700",     bg: "bg-red-50",     border: "border-red-100",     filter: "FAILED" },
+            {
+              label: "Total",
+              value: campaign.stats.total,
+              color: "text-gray-700",
+              bg: "bg-white",
+              border: "border-gray-100",
+              filter: "ALL",
+            },
+            {
+              label: "Sent",
+              value: campaign.stats.sent,
+              color: "text-blue-700",
+              bg: "bg-blue-50",
+              border: "border-blue-100",
+              filter: "SENT",
+            },
+            {
+              label: "Delivered",
+              value: campaign.stats.delivered,
+              color: "text-emerald-700",
+              bg: "bg-emerald-50",
+              border: "border-emerald-100",
+              filter: "DELIVERED",
+            },
+            {
+              label: "Read",
+              value: campaign.stats.read,
+              color: "text-purple-700",
+              bg: "bg-purple-50",
+              border: "border-purple-100",
+              filter: "READ",
+            },
+            {
+              label: "Failed",
+              value: campaign.stats.failed,
+              color: "text-red-700",
+              bg: "bg-red-50",
+              border: "border-red-100",
+              filter: "FAILED",
+            },
           ].map((stat) => (
             <div
               key={stat.label}
@@ -261,7 +336,9 @@ export default function CampaignDetailPage() {
                 filter === stat.filter ? "ring-2 ring-green-400" : ""
               }`}
             >
-              <p className={`text-2xl font-bold ${stat.color}`}>{stat.value}</p>
+              <p className={`text-2xl font-bold ${stat.color}`}>
+                {stat.value}
+              </p>
               <p className="text-xs text-gray-500 mt-1">{stat.label}</p>
             </div>
           ))}
@@ -276,13 +353,27 @@ export default function CampaignDetailPage() {
               <h2 className="font-semibold text-gray-800">
                 Message Details
                 <span className="text-gray-400 font-normal text-sm ml-2">
-                  ({filteredMessages.length} showing)
+                  ({filteredMessages.length} showing
+                  {campaign.stats.total > 50 && (
+                    <span className="text-amber-500">
+                      {" "}· showing first 50 of {campaign.stats.total}
+                    </span>
+                  )}
+                  )
                 </span>
               </h2>
 
               {/* Filter Tabs */}
               <div className="flex gap-1 flex-wrap">
-                {["ALL", "PENDING", "SENT", "DELIVERED", "READ", "FAILED"].map((f) => (
+                {[
+                  "ALL",
+                  "PENDING",
+                  "QUEUED",
+                  "SENT",
+                  "DELIVERED",
+                  "READ",
+                  "FAILED",
+                ].map((f) => (
                   <button
                     key={f}
                     onClick={() => setFilter(f)}
@@ -317,7 +408,9 @@ export default function CampaignDetailPage() {
             ) : (
               filteredMessages.map((msg) => {
                 const config = msgStatusConfig[msg.status] ?? {
-                  emoji: "❓", label: msg.status, classes: "bg-gray-100 text-gray-600"
+                  emoji: "❓",
+                  label: msg.status,
+                  classes: "bg-gray-100 text-gray-600",
                 };
                 return (
                   <div
@@ -333,7 +426,9 @@ export default function CampaignDetailPage() {
                         <p className="text-sm font-medium text-gray-800">
                           {msg.contact.name || "Unknown"}
                         </p>
-                        <p className="text-xs text-gray-400">{msg.contact.phone}</p>
+                        <p className="text-xs text-gray-400">
+                          {msg.contact.phone}
+                        </p>
                       </div>
                     </div>
 
@@ -343,20 +438,26 @@ export default function CampaignDetailPage() {
                       {msg.sentAt && (
                         <p className="text-xs text-gray-400 hidden md:block">
                           {new Date(msg.sentAt).toLocaleTimeString("en-IN", {
-                            hour: "2-digit", minute: "2-digit"
+                            hour: "2-digit",
+                            minute: "2-digit",
                           })}
                         </p>
                       )}
 
                       {/* Error reason */}
                       {msg.errorReason && (
-                        <p className="text-xs text-red-400 hidden md:block max-w-32 truncate" title={msg.errorReason}>
+                        <p
+                          className="text-xs text-red-400 hidden md:block max-w-32 truncate"
+                          title={msg.errorReason}
+                        >
                           {msg.errorReason}
                         </p>
                       )}
 
-                      {/* Status */}
-                      <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${config.classes}`}>
+                      {/* Status Badge */}
+                      <span
+                        className={`text-xs font-semibold px-2.5 py-1 rounded-full ${config.classes}`}
+                      >
                         {config.emoji} {config.label}
                       </span>
                     </div>

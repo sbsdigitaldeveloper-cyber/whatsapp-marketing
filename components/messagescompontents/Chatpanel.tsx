@@ -64,15 +64,33 @@ export function ChatPanel({
   const [assigning, setAssigning] = useState(false);
   const [assignError, setAssignError] = useState<string | null>(null);
 
+  // Track the last message ID to prevent scroll jumping on status updates
+  const [lastMessageId, setLastMessageId] = useState<number | string | null>(null);
+
+
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLInputElement>(null);
   const documentRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLInputElement>(null);
   const assignMenuRef = useRef<HTMLDivElement>(null);
 
+ // --- Optimized Scroll Logic ---
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [contact?.messages]);
+    if (!contact?.messages) return;
+
+    const messages = contact.messages;
+    const latestMessage = messages[messages.length - 1];
+    const latestId = latestMessage?.id ?? null;
+
+    // Scroll only if:
+    // 1. It's a new contact (lastMessageId was null or different contact ID)
+    // 2. A brand new message ID has appeared (not just a status update)
+    if (latestId !== lastMessageId) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      setLastMessageId(latestId);
+    }
+  }, [contact?.messages, contact?.id, lastMessageId]);
 
   useEffect(() => {
     setAssignedAgentId((contact as any)?.assignedAgentId ?? null);
@@ -188,7 +206,11 @@ export function ChatPanel({
   const charCount = replyText.length;
 
   return (
-    <div className="flex-1 flex flex-col h-full min-w-0">
+    <div 
+    // className="flex-1 flex flex-col h-full min-w-0"
+    className="flex-1 flex flex-col min-h-0 overflow-hidden"
+    
+    >
 
       {/* ── Header ── */}
       <div className="flex items-center gap-3 px-5 py-3 border-b border-slate-200 bg-white">

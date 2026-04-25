@@ -13,8 +13,18 @@ interface Props {
   isLoading?: boolean;
 }
 
+// Better Skeleton for UX
 function Skeleton() {
-  return <div className="animate-pulse bg-gray-200 rounded-xl h-24" />;
+  return (
+    <div className="bg-white border border-gray-100 rounded-2xl p-5 h-[110px] animate-pulse">
+      <div className="flex justify-between items-start mb-4">
+        <div className="h-3 w-20 bg-gray-200 rounded" />
+        <div className="h-8 w-8 bg-gray-100 rounded-lg" />
+      </div>
+      <div className="h-6 w-16 bg-gray-200 rounded mb-2" />
+      <div className="h-3 w-24 bg-gray-100 rounded" />
+    </div>
+  );
 }
 
 const icons: Record<string, string> = {
@@ -27,45 +37,57 @@ const icons: Record<string, string> = {
 };
 
 export function KPICards({ data, isLoading }: Props) {
+  // Skeleton Loader (Responsive grid: 1 col on mobile, 3 on tablet, 6 on extra large)
   if (isLoading || !data) {
     return (
-      <div className="grid grid-cols-6 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-5">
         {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} />)}
       </div>
     );
   }
 
   return (
-    <div className="grid grid-cols-6 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-5">
       {data.map((kpi, i) => (
         <div
           key={i}
-          className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm hover:shadow-md transition-all group"
+          className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm hover:shadow-md hover:-translate-y-1 transition-all duration-300 group relative overflow-hidden"
         >
-          {/* Icon + label row */}
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-[11px] text-gray-500 font-medium uppercase tracking-wider">{kpi.label}</p>
-            <div className="w-7 h-7 rounded-lg bg-gray-100 flex items-center justify-center group-hover:bg-green-100 transition-all">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                className="text-gray-400 group-hover:text-green-600 transition-colors" strokeWidth="1.8">
-                <path strokeLinecap="round" strokeLinejoin="round" d={icons[kpi.label] ?? icons["Templates sent"]} />
+          {/* Subtle background decoration */}
+          <div className="absolute top-0 right-0 w-16 h-16 bg-gray-50 rounded-bl-full -mr-8 -mt-8 group-hover:bg-green-50 transition-colors" />
+
+          <div className="flex items-start justify-between relative z-10">
+            <div>
+              <p className="text-[11px] text-gray-400 font-bold uppercase tracking-wider mb-1">
+                {kpi.label}
+              </p>
+              <h3 className="text-2xl font-black text-gray-900 tracking-tight">
+                {kpi.value}
+              </h3>
+            </div>
+            
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300 shadow-sm ${
+              kpi.label === "Failed messages" && kpi.up ? "bg-red-50 text-red-500" : "bg-gray-50 text-gray-400 group-hover:bg-green-600 group-hover:text-white group-hover:shadow-green-100 group-hover:shadow-lg"
+            }`}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d={icons[kpi.label] ?? icons["Templates sent"]} />
               </svg>
             </div>
           </div>
 
-          {/* Value */}
-          <p className="text-2xl font-semibold text-gray-800 tracking-tight leading-none">{kpi.value}</p>
-
-          {/* Change badge */}
-          <div className="flex items-center gap-1.5 mt-2.5">
-            {kpi.change ? (
-              <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${
-                kpi.up ? "bg-green-100 text-green-600" : "bg-red-100 text-red-600"
+          <div className="mt-4 flex items-center gap-2 relative z-10">
+            {kpi.change && (
+              <div className={`flex items-center text-[11px] font-bold px-1.5 py-0.5 rounded ${
+                kpi.up 
+                  ? (kpi.label === "Failed messages" ? "bg-red-50 text-red-600" : "bg-green-50 text-green-600") 
+                  : "bg-gray-100 text-gray-500"
               }`}>
-                {kpi.up ? "↑" : "↓"} {kpi.change}
-              </span>
-            ) : null}
-            <span className="text-[11px] text-gray-400">{kpi.sub}</span>
+                {kpi.up ? "▲" : "▼"} {kpi.change}
+              </div>
+            )}
+            <span className="text-[10px] font-medium text-gray-400 italic">
+              {kpi.sub}
+            </span>
           </div>
         </div>
       ))}

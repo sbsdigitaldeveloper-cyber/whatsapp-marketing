@@ -654,7 +654,7 @@ export default function WhatsAppCampaignPage() {
         )}
 
         {/* ── CAMPAIGN TAB ── */}
-        {activeTab === "campaign" && (
+        {/* {activeTab === "campaign" && (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 max-w-2xl">
             <h2 className="text-lg font-bold text-gray-900 mb-1">🚀 Send Campaign</h2>
             <p className="text-sm text-gray-500 mb-6">
@@ -711,7 +711,7 @@ export default function WhatsAppCampaignPage() {
               </div>
             )}
           </div>
-        )}
+        )} */}
       </div>
     </div>
   );

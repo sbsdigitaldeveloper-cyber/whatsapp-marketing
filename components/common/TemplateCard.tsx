@@ -1,65 +1,44 @@
-// components/templates/TemplateCard.tsx
-import { Template } from "@/app/dashboard/templates/page";
+// components/common/TemplateCard.tsx
+import { MessageCircle, Send, Languages, Info } from "lucide-react";
 
-interface Props {
-  template: Template;
-  onSend: () => void;
-}
-
-export default function TemplateCard({ template, onSend }: Props) {
+export default function TemplateCard({ template, onSend }: { template: any, onSend: () => void }) {
   return (
-    <div className="bg-white border border-gray-100 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between">
-      {/* Top */}
-      <div>
-        {/* Name + Badge */}
-        <div className="flex items-start justify-between gap-2 mb-3">
-          <h3 className="font-semibold text-gray-800 text-sm leading-tight break-all">
-            {template.name}
-          </h3>
-          <span className="shrink-0 text-xs bg-green-100 text-green-700 font-medium px-2 py-0.5 rounded-full">
+    <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm hover:shadow-xl hover:shadow-green-100/50 transition-all duration-300 overflow-hidden flex flex-col group">
+      
+      {/* Visual Preview Area */}
+      <div className="p-5 bg-gray-50 border-b border-gray-100 relative">
+        <div className="flex justify-between items-start mb-4">
+          <span className="px-3 py-1 bg-green-100 text-green-700 text-[10px] font-black rounded-full uppercase">
             {template.status}
           </span>
+          <div className="flex items-center gap-1 text-[10px] text-gray-400 font-bold uppercase">
+            <Languages size={12} /> {template.language}
+          </div>
         </div>
 
-        {/* Header */}
-        {template.headerText && (
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
-            {template.headerText}
-          </p>
-        )}
-
-        {/* Body */}
-        <div className="bg-gray-50 rounded-lg p-3 mb-3">
-          <p className="text-sm text-gray-700 leading-relaxed line-clamp-3">
-            {template.bodyText || "No body text"}
-          </p>
-        </div>
-
-        {/* Footer */}
-        {template.footerText && (
-          <p className="text-xs text-gray-400 italic mb-3">{template.footerText}</p>
-        )}
-
-        {/* Meta info */}
-        <div className="flex items-center gap-3 text-xs text-gray-400">
-          <span className="flex items-center gap-1">
-            🌐 {template.language}
-          </span>
-          {template.hasVariables && (
-            <span className="flex items-center gap-1 text-amber-500">
-              ⚡ {template.variableCount} variable{template.variableCount > 1 ? "s" : ""}
-            </span>
-          )}
+        {/* The Chat Bubble Look */}
+        <div className="bg-white p-3 rounded-2xl rounded-tl-none border border-gray-100 shadow-sm text-[13px] leading-relaxed text-gray-700">
+          {template.headerText && <p className="font-black text-gray-900 mb-1">{template.headerText}</p>}
+          <p className="whitespace-pre-wrap line-clamp-4">{template.bodyText}</p>
+          {template.footerText && <p className="text-[10px] text-gray-400 mt-2">{template.footerText}</p>}
         </div>
       </div>
 
-      {/* Send Button */}
-      <button
-        onClick={onSend}
-        className="mt-4 w-full bg-green-500 hover:bg-green-600 text-white text-sm font-medium py-2 rounded-lg transition-colors"
-      >
-        Send to Contacts →
-      </button>
+      {/* Content Info */}
+      <div className="p-5 flex-1 flex flex-col">
+        <h3 className="font-bold text-gray-900 text-sm truncate mb-1 group-hover:text-green-600 transition-colors">
+          {template.name.replaceAll('_', ' ')}
+        </h3>
+        
+        <div className="flex items-center gap-2 mt-auto pt-4">
+          <button 
+            onClick={onSend}
+            className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg shadow-green-100"
+          >
+            <Send size={14} /> Send Broadcast
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
