@@ -26,7 +26,7 @@ export default defineConfig({
   datasource: {
    
    
-    url: "sqlserver://192.168.0.200:1433;database=WhatsAppMarketing;user=admin;password=admin@pns123;trustServerCertificate=true;integratedSecurity=false;encrypt=true",
+    url: "sqlserver://192.168.0.250:1433;database=WhatsAppMarketing;user=deepak;password=admin@pns123;trustServerCertificate=true;integratedSecurity=false;encrypt=true",
   },
 });
 

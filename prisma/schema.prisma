@@ -111,6 +111,10 @@ model Campaign {
   templateName     String?
   templateLanguage String? @default("en_US")
   templateParams   String?
+  templateHeaderType     String?  
+  templateHeaderMediaUrl String?  
+  templateComponents     String?  //  Full Meta JSON
+  templateButtonParams   String?
   status           String  @default("PENDING") // PENDING / RUNNING / COMPLETED / FAILED
   userId           Int
   phoneNumberId    String  @default("")

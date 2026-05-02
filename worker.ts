@@ -410,13 +410,17 @@ import dotenv from "dotenv";
 import { Worker, Job } from "bullmq";
 import { prisma } from "./lib/prisma";
 
-// Load environment variables
-dotenv.config({ 
-  path: process.env.NODE_ENV === "production" ? ".env" : ".env.local" 
+dotenv.config({
+  path: process.env.NODE_ENV === "production" ? ".env" : ".env.local",
 });
 
 // ---------------------------------------------------------
-// WhatsApp API Call (SaaS Version)
+// Campaign-level cache
+// ---------------------------------------------------------
+const templateCache = new Map<number, any[] | null>();
+
+// ---------------------------------------------------------
+// WhatsApp API Call
 // ---------------------------------------------------------
 async function callWhatsAppAPI(payload: object, phoneId: string, token: string) {
   const version = process.env.WHATSAPP_VERSION || "v21.0";
@@ -439,32 +443,85 @@ async function callWhatsAppAPI(payload: object, phoneId: string, token: string) 
 }
 
 // ---------------------------------------------------------
-// Build Payload for Meta API
+// Universal Payload Builder — Fixed for all Meta Templates
 // ---------------------------------------------------------
-function buildPayload(phone: string, campaign: any) {
-  const base = { messaging_product: "whatsapp", to: phone };
+function buildUniversalPayload(phone: string, campaign: any, templateComponents: any[]) {
+  const components: any[] = [];
+  
+  const safeParse = (str: string) => {
+    try { return str ? JSON.parse(str) : []; } 
+    catch { return []; }
+  };
 
-  if (campaign.messageType === "TEMPLATE") {
-    const params = campaign.templateParams
-      ? JSON.parse(campaign.templateParams)
-      : [];
-    return {
-      ...base,
-      type: "template",
-      template: {
-        name: campaign.templateName,
-        language: { code: campaign.templateLanguage || "en_US" },
-        components: params.length > 0
-          ? [{
-              type: "body",
-              parameters: params.map((p: string) => ({ type: "text", text: p })),
-            }]
-          : [],
-      },
-    };
-  }
+  const bodyInputs = safeParse(campaign.templateParams);
+  const headerInputs = safeParse(campaign.templateHeaderParams);
+  const buttonInputs = safeParse(campaign.templateButtonParams);
 
-  return { ...base, type: "text", text: { body: campaign.message } };
+  templateComponents.forEach((comp) => {
+    // 1. HEADER Handling
+    if (comp.type === "HEADER") {
+      const headerParams: any[] = [];
+      if (["IMAGE", "VIDEO", "DOCUMENT"].includes(comp.format)) {
+        if (campaign.templateHeaderMediaUrl) {
+          const typeKey = comp.format.toLowerCase();
+          headerParams.push({
+            type: typeKey,
+            [typeKey]: { link: campaign.templateHeaderMediaUrl }
+          });
+        }
+      } 
+      else if (comp.format === "TEXT" && comp.text?.includes("{{")) {
+        const varNames = comp.text.match(/\{\{(\w+)\}\}/g)?.map((v: string) => v.replace(/\{\{|\}\}/g, "")) || [];
+        headerInputs.forEach((val: string, i: number) => {
+          headerParams.push({
+            type: "text",
+            text: val,
+            ...(varNames[i] ? { parameter_name: varNames[i] } : {})
+          });
+        });
+      }
+      if (headerParams.length > 0) components.push({ type: "header", parameters: headerParams });
+    }
+
+    // 2. BODY Handling (Supports Named Params like {{sbs}})
+    else if (comp.type === "BODY") {
+      const varNames = comp.text?.match(/\{\{(\w+)\}\}/g)?.map((v: string) => v.replace(/\{\{|\}\}/g, "")) || [];
+      const bodyParams = bodyInputs.map((val: string, i: number) => ({
+        type: "text",
+        text: val,
+        ...(varNames[i] ? { parameter_name: varNames[i] } : {})
+      }));
+      if (bodyParams.length > 0) components.push({ type: "body", parameters: bodyParams });
+    }
+
+    // 3. BUTTONS Handling (Only Dynamic URLs)
+    else if (comp.type === "BUTTONS") {
+      comp.buttons?.forEach((btn: any, index: number) => {
+        if (btn.type === "URL" && btn.url?.includes("{{")) {
+          const btnValue = buttonInputs[index];
+          if (btnValue) {
+            components.push({
+              type: "button",
+              sub_type: "url",
+              index: String(index),
+              parameters: [{ type: "text", text: btnValue }]
+            });
+          }
+        }
+      });
+    }
+  });
+
+  return {
+    messaging_product: "whatsapp",
+    to: phone,
+    type: "template",
+    template: {
+      name: campaign.templateName,
+      language: { code: campaign.templateLanguage || "en" },
+      components: components
+    }
+  };
 }
 
 // ---------------------------------------------------------
@@ -478,17 +535,15 @@ async function updateCampaignStatus(campaignId: number) {
     });
 
     const total = allMessages.length;
-    // PENDING ya QUEUED matlab abhi kaam baki hai
-    const pendingCount = allMessages.filter((m) => 
+    const pendingCount = allMessages.filter((m) =>
       ["PENDING", "QUEUED"].includes(m.status)
     ).length;
 
     if (pendingCount === 0) {
       const failedCount = allMessages.filter((m) => m.status === "FAILED").length;
-      
       const finalStatus =
-        failedCount === total ? "FAILED" :
-        failedCount > 0 ? "PARTIAL" : "COMPLETED";
+        failedCount === total ? "FAILED"  :
+        failedCount > 0       ? "PARTIAL" : "COMPLETED";
 
       await prisma.campaign.update({
         where: { id: campaignId },
@@ -496,6 +551,7 @@ async function updateCampaignStatus(campaignId: number) {
       });
 
       console.log(`📊 Campaign ${campaignId} finished with status: ${finalStatus}`);
+      templateCache.delete(campaignId);
     }
   } catch (err: any) {
     console.error("❌ Campaign status update error:", err.message);
@@ -503,30 +559,28 @@ async function updateCampaignStatus(campaignId: number) {
 }
 
 // ---------------------------------------------------------
-// The Worker Logic
+// Worker Implementation
 // ---------------------------------------------------------
 const worker = new Worker(
   "whatsapp-messages",
   async (job: Job) => {
     const { messageId } = job.data;
 
-    // Fetch message with RELATIONS (Fixes the property doesn't exist error)
     const message = await prisma.message.findUnique({
       where: { id: messageId },
       include: {
         contact: true,
         campaign: true,
-        user: {
-          include: { whatsappConfig: true }
-        }
+        user: { include: { whatsappConfig: true } },
       },
     });
 
-    // Guard Checks
     if (!message) return;
+
     if (!message.user.whatsappConfig || !message.user.whatsappConfig.isActive) {
-      throw new Error("Client WhatsApp API not configured or inactive");
+      throw new Error("WhatsApp API not configured or inactive");
     }
+
     if (!message.contact?.optIn) {
       await prisma.message.update({
         where: { id: messageId },
@@ -536,19 +590,49 @@ const worker = new Worker(
     }
 
     try {
-      const payload = buildPayload(message.contact.phone, message.campaign);
       const { phoneNumberId, accessToken } = message.user.whatsappConfig;
+      const campaignId = message.campaign?.id;
 
+      let payload: object;
+
+      // ── Handle Plain Text vs Template ──────────────────
+      if (message.campaign?.messageType !== "TEMPLATE") {
+        payload = {
+          messaging_product: "whatsapp",
+          to: message.contact.phone,
+          type: "text",
+          text: { body: message.campaign?.message || "" },
+        };
+      } else {
+        // Template Logic
+        let templateComponents: any[] = [];
+        if (campaignId && templateCache.has(campaignId)) {
+          templateComponents = templateCache.get(campaignId) || [];
+        } else {
+          templateComponents = message.campaign?.templateComponents
+            ? JSON.parse(message.campaign.templateComponents)
+            : [];
+          if (campaignId) templateCache.set(campaignId, templateComponents);
+        }
+
+        payload = buildUniversalPayload(
+          message.contact.phone,
+          message.campaign,
+          templateComponents
+        );
+      }
+
+      // ── Send API Call ──────────────────────────────────
       const response = await callWhatsAppAPI(payload, phoneNumberId, accessToken);
       const waId = response?.messages?.[0]?.id;
 
       await prisma.message.update({
         where: { id: messageId },
-        data: { 
-          status: "SENT", 
-          sentAt: new Date(), 
+        data: {
+          status: "SENT",
+          sentAt: new Date(),
           whatsappMsgId: waId,
-          errorReason: null 
+          errorReason: null,
         },
       });
 
@@ -558,12 +642,9 @@ const worker = new Worker(
       console.error(`❌ Message ${messageId} failed:`, err.message);
       await prisma.message.update({
         where: { id: messageId },
-        data: {
-          status: "FAILED",
-          errorReason: err.message,
-        },
+        data: { status: "FAILED", errorReason: err.message },
       });
-      throw err; // Re-throw for BullMQ attempts
+      throw err;
     }
   },
   {
@@ -571,23 +652,17 @@ const worker = new Worker(
       host: "127.0.0.1",
       port: 6379,
       db: 0,
-      maxRetriesPerRequest: null,
     },
-    concurrency: 10, // Ek saath 10 messages process honge
-    limiter: {
-      max: 20, // Meta API limits ke liye safe
-      duration: 1000,
-    },
+    concurrency: 10,
+    limiter: { max: 20, duration: 1000 },
   }
 );
 
-// ---------------------------------------------------------
 // Worker Events
-// ---------------------------------------------------------
 worker.on("completed", async (job) => {
   const msg = await prisma.message.findUnique({
     where: { id: job.data.messageId },
-    select: { campaignId: true }
+    select: { campaignId: true },
   });
   if (msg?.campaignId) await updateCampaignStatus(msg.campaignId);
 });
@@ -596,18 +671,14 @@ worker.on("failed", async (job) => {
   if (job?.data?.messageId) {
     const msg = await prisma.message.findUnique({
       where: { id: job.data.messageId },
-      select: { campaignId: true }
+      select: { campaignId: true },
     });
     if (msg?.campaignId) await updateCampaignStatus(msg.campaignId);
   }
 });
 
 worker.on("drained", () => {
-  console.log("☕ Queue is empty. Keeping worker alive for next jobs...");
-});
-
-worker.on("error", (err) => {
-  console.error("🔥 Worker global error:", err);
+  console.log("☕ Queue is empty. Keeping worker alive...");
 });
 
 console.log("🚀 WhatsApp Worker is running on Local Redis (DB 0)");

@@ -3,13 +3,13 @@ import { PrismaMssql } from "@prisma/adapter-mssql";
 
 const prismaClientSingleton = () => {
   const adapter = new PrismaMssql({
-    server: "192.168.0.200",
+    server: "192.168.0.250",
     port: 1433,
     database: "WhatsAppMarketing",
     authentication: {
       type: "default",
       options: {
-        userName: "admin",
+        userName: "deepak",
         password: "admin@pns123",
       },
     },

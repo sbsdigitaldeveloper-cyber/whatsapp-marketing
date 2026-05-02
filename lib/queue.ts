@@ -30,6 +30,8 @@ const connection = {
   maxRetriesPerRequest: null, // BullMQ ke liye ye null hona zaroori hai
 };
 
+
+
 /**
  * WhatsApp Message Queue Definition
  */
